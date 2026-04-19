@@ -1,11 +1,11 @@
 """
-Directed Graph Link Prediction V4
-====================================
-Improvements: 100% random negatives, 1:1 ratio, 
-filtered features, conservative LightGBM parameters.
+Directed Graph Link Prediction V5 (Minimalist Features)
+==========================================================
+Hypothesis: Extra features introduce noise. Testing Top-2 
+and Top-5 minimal feature suites directly.
 
 Usage:  uv run predict.py
-Output: output/submission_lgbm_v4.csv, submission_ensemble_v4.csv
+Output: output/submission_top2.csv, submission_top5.csv
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import pandas as pd
 
 from graph_utils import load_data, generate_negatives, precompute_graph_properties
 from features import compute_features
-from models import strategy_lgbm_v4, strategy_ensemble_v4
+from models import strategy_lgbm_subset
 
 warnings.filterwarnings("ignore")
 
@@ -32,7 +32,7 @@ def verify_submissions(output_dir: Path, sample_path: Path) -> None:
     """Assert submission CSVs match the expected format."""
     print("\n=== Verification ===")
     sample_sub = pd.read_csv(sample_path)
-    for fname in output_dir.glob("submission_*_v4.csv"):
+    for fname in output_dir.glob("submission_top*.csv"):
         sub = pd.read_csv(fname)
         assert list(sub.columns) == ["ID", "Label"], f"{fname.name}: column mismatch"
         assert len(sub) == len(sample_sub), f"{fname.name}: row count mismatch"
@@ -80,22 +80,19 @@ def main() -> None:
         test_pairs, G, G_undirected, pagerank_dict, community_dict, hubs, authorities,
     )
 
-    # ---- LightGBM V4 ----
-    sub_lgbm = strategy_lgbm_v4(train_features, train_labels, test_features, test_df, OUTPUT_DIR)
+    # ---- LightGBM Top-2 ----
+    top2_features = ["resource_allocation", "adamic_adar"]
+    strategy_lgbm_subset(
+        train_features, train_labels, test_features, test_df, 
+        top2_features, OUTPUT_DIR / "submission_top2.csv"
+    )
 
-    # ---- Ensemble V4 (reuse existing V1 heuristic + LightGBM V4) ----
-    heuristic_path = OUTPUT_DIR / "submission_heuristic_v2.csv"
-    if heuristic_path.exists():
-        preds_heuristic = pd.read_csv(heuristic_path)["Label"].values
-        strategy_ensemble_v4(test_df, preds_heuristic, sub_lgbm["Label"].values, OUTPUT_DIR)
-    else:
-        # Fallback to the very original heuristic if _v2 doesn't exist
-        heuristic_path = OUTPUT_DIR / "submission_heuristic.csv"
-        if heuristic_path.exists():
-            preds_heuristic = pd.read_csv(heuristic_path)["Label"].values
-            strategy_ensemble_v4(test_df, preds_heuristic, sub_lgbm["Label"].values, OUTPUT_DIR)
-        else:
-            print("\n  Skipping ensemble (no existing heuristic submission found)")
+    # ---- LightGBM Top-5 ----
+    top5_features = ["resource_allocation", "adamic_adar", "same_community", "clustering_v", "pref_attach"]
+    strategy_lgbm_subset(
+        train_features, train_labels, test_features, test_df, 
+        top5_features, OUTPUT_DIR / "submission_top5.csv"
+    )
 
     # ---- Verify ----
     verify_submissions(OUTPUT_DIR, BASE_DIR / "sample_submission.csv")
