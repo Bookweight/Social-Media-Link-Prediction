@@ -1,4 +1,4 @@
-"""Model strategies for link prediction."""
+"""Model strategies for link prediction (V2)."""
 
 from __future__ import annotations
 
@@ -6,54 +6,27 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 from pathlib import Path
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold
-from sklearn.preprocessing import MinMaxScaler
 
 SEED = 42
 
 
 # -----------------------------------------------------------------------
-# Strategy 1: Heuristic Baseline (Adamic-Adar)
+# Strategy: LightGBM V2 (tuned hyperparameters)
 # -----------------------------------------------------------------------
 
-def strategy_heuristic(
-    test_df: pd.DataFrame,
-    test_features: pd.DataFrame,
-    output_dir: Path,
-) -> pd.DataFrame:
-    """Predict using normalized Adamic-Adar score (no ML training)."""
-    print("\n=== Strategy 1: Heuristic (Adamic-Adar) ===")
-    scores = test_features["adamic_adar"].values.copy()
-    s_min, s_max = scores.min(), scores.max()
-    if s_max > s_min:
-        scores = (scores - s_min) / (s_max - s_min)
-    else:
-        scores = np.full_like(scores, 0.5)
-
-    sub = pd.DataFrame({"ID": test_df["ID"], "Label": scores})
-    path = output_dir / "submission_heuristic.csv"
-    sub.to_csv(path, index=False)
-    print(f"  Saved {path.name}")
-    return sub
-
-
-# -----------------------------------------------------------------------
-# Strategy 2: LightGBM with Engineered Graph Features
-# -----------------------------------------------------------------------
-
-def strategy_lgbm(
+def strategy_lgbm_v2(
     train_features: pd.DataFrame,
     train_labels: np.ndarray,
     test_features: pd.DataFrame,
     test_df: pd.DataFrame,
     output_dir: Path,
 ) -> pd.DataFrame:
-    """Train LightGBM binary classifier with 5-fold CV."""
+    """Train LightGBM with tuned params and hard negatives."""
     import lightgbm as lgb
 
-    print("\n=== Strategy 2: LightGBM ===")
+    print("\n=== Strategy: LightGBM V2 ===")
     feature_cols = train_features.columns.tolist()
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
     auc_scores: list[float] = []
@@ -66,17 +39,18 @@ def strategy_lgbm(
     params = {
         "objective": "binary",
         "metric": "auc",
-        "learning_rate": 0.05,
-        "num_leaves": 63,
+        "learning_rate": 0.01,
+        "num_leaves": 127,
         "max_depth": -1,
-        "min_child_samples": 20,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "reg_alpha": 0.1,
-        "reg_lambda": 0.1,
+        "min_child_samples": 50,
+        "subsample": 0.7,
+        "colsample_bytree": 0.7,
+        "reg_alpha": 0.5,
+        "reg_lambda": 0.5,
         "n_jobs": -1,
         "verbose": -1,
         "seed": SEED,
+        "bagging_freq": 5,
     }
 
     for fold, (tr_idx, val_idx) in enumerate(skf.split(X_train, y_train)):
@@ -88,127 +62,83 @@ def strategy_lgbm(
 
         model = lgb.train(
             params, dtrain,
-            num_boost_round=1000,
+            num_boost_round=3000,
             valid_sets=[dval],
-            callbacks=[lgb.early_stopping(50, verbose=False)],
+            callbacks=[lgb.early_stopping(100, verbose=False)],
         )
 
         val_pred = model.predict(X_val)
         fold_auc = roc_auc_score(y_val, val_pred)
         auc_scores.append(fold_auc)
-        print(f"  Fold {fold + 1} AUC: {fold_auc:.5f}")
+        print(f"  Fold {fold + 1} AUC: {fold_auc:.5f}  (best_iter={model.best_iteration})")
         test_preds += model.predict(X_test) / 5
 
-    print(f"  Mean CV AUC: {np.mean(auc_scores):.5f}")
+    mean_auc = np.mean(auc_scores)
+    print(f"  Mean CV AUC: {mean_auc:.5f}")
+
+    # Print feature importance
+    print("\n  Top-15 Feature Importance:")
+    importance = model.feature_importance(importance_type="gain")
+    feat_imp = sorted(zip(feature_cols, importance), key=lambda x: x[1], reverse=True)
+    for name, imp in feat_imp[:15]:
+        print(f"    {name:30s} {imp:.1f}")
 
     sub = pd.DataFrame({"ID": test_df["ID"], "Label": test_preds})
-    path = output_dir / "submission_lgbm.csv"
+    path = output_dir / "submission_lgbm_v2.csv"
     sub.to_csv(path, index=False)
-    print(f"  Saved {path.name}")
+    print(f"\n  Saved {path.name}")
     return sub
 
 
 # -----------------------------------------------------------------------
-# Strategy 3: Node2Vec + Logistic Regression
+# Strategy: Heuristic (Adamic-Adar, unchanged)
 # -----------------------------------------------------------------------
 
-def strategy_node2vec(
-    G: nx.DiGraph,
-    train_pairs: list[tuple[int, int]],
-    train_labels: np.ndarray,
-    test_pairs: list[tuple[int, int]],
+def strategy_heuristic(
     test_df: pd.DataFrame,
+    test_features: pd.DataFrame,
     output_dir: Path,
 ) -> pd.DataFrame:
-    """Learn Node2Vec embeddings, then classify with LogReg."""
-    from node2vec import Node2Vec
+    """Predict using normalized Adamic-Adar score."""
+    print("\n=== Strategy: Heuristic (Adamic-Adar) ===")
+    scores = test_features["adamic_adar"].values.copy()
+    s_min, s_max = scores.min(), scores.max()
+    if s_max > s_min:
+        scores = (scores - s_min) / (s_max - s_min)
+    else:
+        scores = np.full_like(scores, 0.5)
 
-    print("\n=== Strategy 3: Node2Vec + LogReg ===")
-    G_und = G.to_undirected()
-
-    print("  Running Node2Vec random walks...")
-    n2v = Node2Vec(
-        G_und, dimensions=64, walk_length=30, num_walks=20,
-        workers=1, p=1, q=0.5, seed=SEED, quiet=True,
-    )
-    print("  Training Word2Vec embeddings...")
-    model = n2v.fit(window=10, min_count=1, batch_words=4, seed=SEED)
-
-    def _get_embedding(node_id: int) -> np.ndarray:
-        try:
-            return model.wv[str(node_id)]
-        except KeyError:
-            return np.zeros(64)
-
-    def _pair_features(u: int, v: int) -> np.ndarray:
-        emb_u, emb_v = _get_embedding(u), _get_embedding(v)
-        hadamard = emb_u * emb_v
-        cosine = np.dot(emb_u, emb_v) / (np.linalg.norm(emb_u) * np.linalg.norm(emb_v) + 1e-8)
-        l1 = np.abs(emb_u - emb_v)
-        l2_dist = np.linalg.norm(emb_u - emb_v)
-        return np.concatenate([hadamard, l1, [cosine, l2_dist]])
-
-    print("  Computing pair features for train...")
-    X_train = np.array([_pair_features(u, v) for u, v in train_pairs])
-    print("  Computing pair features for test...")
-    X_test = np.array([_pair_features(u, v) for u, v in test_pairs])
-
-    scaler = MinMaxScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
-
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
-    auc_scores: list[float] = []
-    test_preds = np.zeros(len(X_test))
-
-    for fold, (tr_idx, val_idx) in enumerate(skf.split(X_train, train_labels)):
-        X_tr, X_val = X_train[tr_idx], X_train[val_idx]
-        y_tr, y_val = train_labels[tr_idx], train_labels[val_idx]
-
-        clf = LogisticRegression(max_iter=1000, C=1.0, solver="lbfgs", random_state=SEED)
-        clf.fit(X_tr, y_tr)
-
-        val_pred = clf.predict_proba(X_val)[:, 1]
-        fold_auc = roc_auc_score(y_val, val_pred)
-        auc_scores.append(fold_auc)
-        print(f"  Fold {fold + 1} AUC: {fold_auc:.5f}")
-        test_preds += clf.predict_proba(X_test)[:, 1] / 5
-
-    print(f"  Mean CV AUC: {np.mean(auc_scores):.5f}")
-
-    sub = pd.DataFrame({"ID": test_df["ID"], "Label": test_preds})
-    path = output_dir / "submission_node2vec.csv"
+    sub = pd.DataFrame({"ID": test_df["ID"], "Label": scores})
+    path = output_dir / "submission_heuristic_v2.csv"
     sub.to_csv(path, index=False)
     print(f"  Saved {path.name}")
     return sub
 
 
 # -----------------------------------------------------------------------
-# Strategy 4: Ensemble (Rank Average)
+# Strategy: Ensemble V2 (Heuristic + LightGBM only)
 # -----------------------------------------------------------------------
 
-def strategy_ensemble(
+def strategy_ensemble_v2(
     test_df: pd.DataFrame,
     preds_heuristic: np.ndarray,
     preds_lgbm: np.ndarray,
-    preds_n2v: np.ndarray,
     output_dir: Path,
 ) -> pd.DataFrame:
-    """Combine predictions via weighted rank averaging."""
+    """Combine Heuristic + LightGBM via weighted rank averaging."""
     from scipy.stats import rankdata
 
-    print("\n=== Strategy 4: Ensemble (Rank Average) ===")
+    print("\n=== Strategy: Ensemble V2 (Heuristic + LightGBM) ===")
 
     def _rank_normalize(arr: np.ndarray) -> np.ndarray:
         return rankdata(arr) / len(arr)
 
-    r1 = _rank_normalize(preds_heuristic)
-    r2 = _rank_normalize(preds_lgbm)
-    r3 = _rank_normalize(preds_n2v)
-    ensemble = 0.2 * r1 + 0.5 * r2 + 0.3 * r3
+    r_h = _rank_normalize(preds_heuristic)
+    r_l = _rank_normalize(preds_lgbm)
+    ensemble = 0.3 * r_h + 0.7 * r_l
 
     sub = pd.DataFrame({"ID": test_df["ID"], "Label": ensemble})
-    path = output_dir / "submission_ensemble.csv"
+    path = output_dir / "submission_ensemble_v2.csv"
     sub.to_csv(path, index=False)
     print(f"  Saved {path.name}")
     return sub
