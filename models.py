@@ -16,17 +16,17 @@ SEED = 42
 # Strategy: LightGBM V2 (tuned hyperparameters)
 # -----------------------------------------------------------------------
 
-def strategy_lgbm_v2(
+def strategy_lgbm_v3(
     train_features: pd.DataFrame,
     train_labels: np.ndarray,
     test_features: pd.DataFrame,
     test_df: pd.DataFrame,
     output_dir: Path,
 ) -> pd.DataFrame:
-    """Train LightGBM with tuned params and hard negatives."""
+    """Train LightGBM V3: balanced negatives, moderate regularization."""
     import lightgbm as lgb
 
-    print("\n=== Strategy: LightGBM V2 ===")
+    print("\n=== Strategy: LightGBM V3 ===")
     feature_cols = train_features.columns.tolist()
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
     auc_scores: list[float] = []
@@ -39,14 +39,14 @@ def strategy_lgbm_v2(
     params = {
         "objective": "binary",
         "metric": "auc",
-        "learning_rate": 0.01,
+        "learning_rate": 0.03,
         "num_leaves": 127,
         "max_depth": -1,
-        "min_child_samples": 50,
-        "subsample": 0.7,
-        "colsample_bytree": 0.7,
-        "reg_alpha": 0.5,
-        "reg_lambda": 0.5,
+        "min_child_samples": 30,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "reg_alpha": 0.1,
+        "reg_lambda": 0.1,
         "n_jobs": -1,
         "verbose": -1,
         "seed": SEED,
@@ -62,9 +62,9 @@ def strategy_lgbm_v2(
 
         model = lgb.train(
             params, dtrain,
-            num_boost_round=3000,
+            num_boost_round=5000,
             valid_sets=[dval],
-            callbacks=[lgb.early_stopping(100, verbose=False)],
+            callbacks=[lgb.early_stopping(150, verbose=False)],
         )
 
         val_pred = model.predict(X_val)
@@ -84,42 +84,20 @@ def strategy_lgbm_v2(
         print(f"    {name:30s} {imp:.1f}")
 
     sub = pd.DataFrame({"ID": test_df["ID"], "Label": test_preds})
-    path = output_dir / "submission_lgbm_v2.csv"
+    path = output_dir / "submission_lgbm_v3.csv"
     sub.to_csv(path, index=False)
     print(f"\n  Saved {path.name}")
     return sub
 
 
-# -----------------------------------------------------------------------
-# Strategy: Heuristic (Adamic-Adar, unchanged)
-# -----------------------------------------------------------------------
 
-def strategy_heuristic(
-    test_df: pd.DataFrame,
-    test_features: pd.DataFrame,
-    output_dir: Path,
-) -> pd.DataFrame:
-    """Predict using normalized Adamic-Adar score."""
-    print("\n=== Strategy: Heuristic (Adamic-Adar) ===")
-    scores = test_features["adamic_adar"].values.copy()
-    s_min, s_max = scores.min(), scores.max()
-    if s_max > s_min:
-        scores = (scores - s_min) / (s_max - s_min)
-    else:
-        scores = np.full_like(scores, 0.5)
-
-    sub = pd.DataFrame({"ID": test_df["ID"], "Label": scores})
-    path = output_dir / "submission_heuristic_v2.csv"
-    sub.to_csv(path, index=False)
-    print(f"  Saved {path.name}")
-    return sub
 
 
 # -----------------------------------------------------------------------
-# Strategy: Ensemble V2 (Heuristic + LightGBM only)
+# Strategy: Ensemble V3 (Heuristic + LightGBM)
 # -----------------------------------------------------------------------
 
-def strategy_ensemble_v2(
+def strategy_ensemble_v3(
     test_df: pd.DataFrame,
     preds_heuristic: np.ndarray,
     preds_lgbm: np.ndarray,
@@ -128,7 +106,7 @@ def strategy_ensemble_v2(
     """Combine Heuristic + LightGBM via weighted rank averaging."""
     from scipy.stats import rankdata
 
-    print("\n=== Strategy: Ensemble V2 (Heuristic + LightGBM) ===")
+    print("\n=== Strategy: Ensemble V3 (Heuristic + LightGBM) ===")
 
     def _rank_normalize(arr: np.ndarray) -> np.ndarray:
         return rankdata(arr) / len(arr)
@@ -138,7 +116,7 @@ def strategy_ensemble_v2(
     ensemble = 0.3 * r_h + 0.7 * r_l
 
     sub = pd.DataFrame({"ID": test_df["ID"], "Label": ensemble})
-    path = output_dir / "submission_ensemble_v2.csv"
+    path = output_dir / "submission_ensemble_v3.csv"
     sub.to_csv(path, index=False)
     print(f"  Saved {path.name}")
     return sub

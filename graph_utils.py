@@ -26,32 +26,30 @@ def load_data(base_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, nx.DiGraph, n
     return train_df, test_df, G, G_undirected
 
 
-def generate_hard_negatives(
+def generate_negatives(
     G: nx.DiGraph,
-    n_samples: int,
-    community_dict: dict[int, int],
+    n_positive: int,
+    neg_ratio: float = 2.0,
     rng: np.random.RandomState | None = None,
 ) -> list[tuple[int, int]]:
-    """Generate hard negative samples that resemble test-set distribution.
+    """Generate negative samples with mixed strategy.
 
-    Strategy:
-      - 50% from 2-hop neighbors (u->w->? but no u->v edge)
-      - 30% from same Louvain community (no direct edge)
-      - 20% fully random (no direct edge)
+    V3 strategy (conservative blend):
+      - 80% fully random non-edges
+      - 20% 2-hop neighbors (u->w->v but no u->v edge)
+
+    Args:
+        n_positive: number of positive samples
+        neg_ratio: ratio of negatives to positives (default 2.0 = 2:1)
     """
     if rng is None:
         rng = np.random.RandomState(SEED)
 
+    n_total = int(n_positive * neg_ratio)
     nodes = list(G.nodes())
     edge_set = set(G.edges())
-    n_2hop = int(n_samples * 0.50)
-    n_comm = int(n_samples * 0.30)
-    n_rand = n_samples - n_2hop - n_comm
-
-    # Build community -> node list mapping
-    comm_to_nodes: dict[int, list[int]] = {}
-    for node, comm_id in community_dict.items():
-        comm_to_nodes.setdefault(comm_id, []).append(node)
+    n_2hop = int(n_total * 0.20)
+    n_rand = n_total - n_2hop
 
     negatives: list[tuple[int, int]] = []
     used: set[tuple[int, int]] = set(edge_set)
@@ -63,7 +61,7 @@ def generate_hard_negatives(
             return True
         return False
 
-    # --- 2-hop negatives ---
+    # --- 2-hop negatives (20%) ---
     print(f"  Generating {n_2hop:,} 2-hop negatives...")
     attempts = 0
     count_2hop = 0
@@ -81,29 +79,10 @@ def generate_hard_negatives(
         if _add(u, v):
             count_2hop += 1
 
-    # Fill remaining with random if 2-hop was insufficient
     n_rand += (n_2hop - count_2hop)
     print(f"    Got {count_2hop:,} 2-hop negatives")
 
-    # --- Same-community negatives ---
-    print(f"  Generating {n_comm:,} same-community negatives...")
-    count_comm = 0
-    attempts = 0
-    while count_comm < n_comm and attempts < n_comm * 20:
-        attempts += 1
-        u = nodes[rng.randint(len(nodes))]
-        comm = community_dict.get(u, -1)
-        members = comm_to_nodes.get(comm, [])
-        if len(members) < 2:
-            continue
-        v = members[rng.randint(len(members))]
-        if _add(u, v):
-            count_comm += 1
-
-    n_rand += (n_comm - count_comm)
-    print(f"    Got {count_comm:,} same-community negatives")
-
-    # --- Random negatives ---
+    # --- Random negatives (80%) ---
     print(f"  Generating {n_rand:,} random negatives...")
     count_rand = 0
     while count_rand < n_rand:
@@ -112,7 +91,7 @@ def generate_hard_negatives(
         if _add(u, v):
             count_rand += 1
 
-    print(f"  Total negatives: {len(negatives):,}")
+    print(f"  Total negatives: {len(negatives):,} (ratio {neg_ratio}:1)")
     return negatives
 
 
