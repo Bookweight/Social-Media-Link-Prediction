@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Output submissions (generated, not tracked)
+output/
+
+# Data files (too large for git)
+*.csv
+
+# UV lock (optional -- uncomment to track)
+# uv.lock
