@@ -34,13 +34,7 @@ def generate_negatives(
 ) -> list[tuple[int, int]]:
     """Generate negative samples with mixed strategy.
 
-    V3 strategy (conservative blend):
-      - 80% fully random non-edges
-      - 20% 2-hop neighbors (u->w->v but no u->v edge)
-
-    Args:
-        n_positive: number of positive samples
-        neg_ratio: ratio of negatives to positives (default 2.0 = 2:1)
+    V4 strategy: 100% fully random non-edges (matches Test Set prior)
     """
     if rng is None:
         rng = np.random.RandomState(SEED)
@@ -48,7 +42,7 @@ def generate_negatives(
     n_total = int(n_positive * neg_ratio)
     nodes = list(G.nodes())
     edge_set = set(G.edges())
-    n_2hop = int(n_total * 0.20)
+    n_2hop = 0  # Changed to 0 for V4
     n_rand = n_total - n_2hop
 
     negatives: list[tuple[int, int]] = []

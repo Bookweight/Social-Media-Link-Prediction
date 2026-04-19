@@ -16,17 +16,17 @@ SEED = 42
 # Strategy: LightGBM V2 (tuned hyperparameters)
 # -----------------------------------------------------------------------
 
-def strategy_lgbm_v3(
+def strategy_lgbm_v4(
     train_features: pd.DataFrame,
     train_labels: np.ndarray,
     test_features: pd.DataFrame,
     test_df: pd.DataFrame,
     output_dir: Path,
 ) -> pd.DataFrame:
-    """Train LightGBM V3: balanced negatives, moderate regularization."""
+    """Train LightGBM V4: 100% random negatives, conservative regularization."""
     import lightgbm as lgb
 
-    print("\n=== Strategy: LightGBM V3 ===")
+    print("\n=== Strategy: LightGBM V4 ===")
     feature_cols = train_features.columns.tolist()
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
     auc_scores: list[float] = []
@@ -39,8 +39,8 @@ def strategy_lgbm_v3(
     params = {
         "objective": "binary",
         "metric": "auc",
-        "learning_rate": 0.03,
-        "num_leaves": 127,
+        "learning_rate": 0.01,
+        "num_leaves": 63,
         "max_depth": -1,
         "min_child_samples": 30,
         "subsample": 0.8,
@@ -84,7 +84,7 @@ def strategy_lgbm_v3(
         print(f"    {name:30s} {imp:.1f}")
 
     sub = pd.DataFrame({"ID": test_df["ID"], "Label": test_preds})
-    path = output_dir / "submission_lgbm_v3.csv"
+    path = output_dir / "submission_lgbm_v4.csv"
     sub.to_csv(path, index=False)
     print(f"\n  Saved {path.name}")
     return sub
@@ -94,10 +94,10 @@ def strategy_lgbm_v3(
 
 
 # -----------------------------------------------------------------------
-# Strategy: Ensemble V3 (Heuristic + LightGBM)
+# Strategy: Ensemble V4 (Heuristic + LightGBM)
 # -----------------------------------------------------------------------
 
-def strategy_ensemble_v3(
+def strategy_ensemble_v4(
     test_df: pd.DataFrame,
     preds_heuristic: np.ndarray,
     preds_lgbm: np.ndarray,
@@ -106,7 +106,7 @@ def strategy_ensemble_v3(
     """Combine Heuristic + LightGBM via weighted rank averaging."""
     from scipy.stats import rankdata
 
-    print("\n=== Strategy: Ensemble V3 (Heuristic + LightGBM) ===")
+    print("\n=== Strategy: Ensemble V4 (Heuristic + LightGBM) ===")
 
     def _rank_normalize(arr: np.ndarray) -> np.ndarray:
         return rankdata(arr) / len(arr)
@@ -116,7 +116,7 @@ def strategy_ensemble_v3(
     ensemble = 0.3 * r_h + 0.7 * r_l
 
     sub = pd.DataFrame({"ID": test_df["ID"], "Label": ensemble})
-    path = output_dir / "submission_ensemble_v3.csv"
+    path = output_dir / "submission_ensemble_v4.csv"
     sub.to_csv(path, index=False)
     print(f"  Saved {path.name}")
     return sub

@@ -58,12 +58,6 @@ def compute_features(
         feat["total_deg_u"] = total_u
         feat["total_deg_v"] = total_v
 
-        # -- Log Degree (4) --
-        feat["log_out_u"] = np.log1p(out_u)
-        feat["log_in_v"] = np.log1p(in_v)
-        feat["log_total_u"] = np.log1p(total_u)
-        feat["log_total_v"] = np.log1p(total_v)
-
         # -- Reciprocity (1) --
         feat["reciprocal"] = 1 if (v, u) in edge_set else 0
 
