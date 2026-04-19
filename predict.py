@@ -1,11 +1,11 @@
 """
-Directed Graph Link Prediction V5 (Minimalist Features)
+Directed Graph Link Prediction V6 (XGBoost Ensemble)
 ==========================================================
-Hypothesis: Extra features introduce noise. Testing Top-2 
-and Top-5 minimal feature suites directly.
+Hypothesis: Ensembling LightGBM with XGBoost pushes 
+the performance limit of the 36 robust features.
 
 Usage:  uv run predict.py
-Output: output/submission_top2.csv, submission_top5.csv
+Output: output/submission_xgboost.csv, submission_ensemble_xgb_lgbm.csv
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import pandas as pd
 
 from graph_utils import load_data, generate_negatives, precompute_graph_properties
 from features import compute_features
-from models import strategy_lgbm_subset
+from models import strategy_lgbm_v6, strategy_xgboost, strategy_ensemble_xgb_lgbm
 
 warnings.filterwarnings("ignore")
 
@@ -32,16 +32,17 @@ def verify_submissions(output_dir: Path, sample_path: Path) -> None:
     """Assert submission CSVs match the expected format."""
     print("\n=== Verification ===")
     sample_sub = pd.read_csv(sample_path)
-    for fname in output_dir.glob("submission_top*.csv"):
-        sub = pd.read_csv(fname)
-        assert list(sub.columns) == ["ID", "Label"], f"{fname.name}: column mismatch"
-        assert len(sub) == len(sample_sub), f"{fname.name}: row count mismatch"
-        assert (sub["ID"] == sample_sub["ID"]).all(), f"{fname.name}: ID mismatch"
-        assert sub["Label"].between(0, 1).all(), f"{fname.name}: Label out of [0,1]"
+    for fname in ["submission_lgbm_v6.csv", "submission_xgboost.csv", "submission_ensemble_xgb_lgbm.csv"]:
+        path = output_dir / fname
+        if not path.exists():
+            continue
+        sub = pd.read_csv(path)
+        assert list(sub.columns) == ["ID", "Label"], f"{fname}: column mismatch"
+        assert len(sub) == len(sample_sub), f"{fname}: row count mismatch"
+        assert (sub["ID"] == sample_sub["ID"]).all(), f"{fname}: ID mismatch"
+        assert (sub["Label"] >= 0).all() and (sub["Label"] <= 1).all(), f"{fname}: Label out of bounds [0,1]"
         print(
-            f"  {fname.name}: OK "
-            f"(rows={len(sub)}, "
-            f"label=[{sub['Label'].min():.4f}, {sub['Label'].max():.4f}])"
+            f"  {fname}: OK (rows={len(sub)}, label=[{sub['Label'].min():.4f}, {sub['Label'].max():.4f}])"
         )
 
 
@@ -80,18 +81,19 @@ def main() -> None:
         test_pairs, G, G_undirected, pagerank_dict, community_dict, hubs, authorities,
     )
 
-    # ---- LightGBM Top-2 ----
-    top2_features = ["resource_allocation", "adamic_adar"]
-    strategy_lgbm_subset(
-        train_features, train_labels, test_features, test_df, 
-        top2_features, OUTPUT_DIR / "submission_top2.csv"
+    # ---- LightGBM V6 (V1 parameters + 36 features) ----
+    sub_lgbm = strategy_lgbm_v6(
+        train_features, train_labels, test_features, test_df, OUTPUT_DIR
     )
 
-    # ---- LightGBM Top-5 ----
-    top5_features = ["resource_allocation", "adamic_adar", "same_community", "clustering_v", "pref_attach"]
-    strategy_lgbm_subset(
-        train_features, train_labels, test_features, test_df, 
-        top5_features, OUTPUT_DIR / "submission_top5.csv"
+    # ---- XGBoost ----
+    sub_xgb = strategy_xgboost(
+        train_features, train_labels, test_features, test_df, OUTPUT_DIR
+    )
+
+    # ---- Rank Average Ensemble ----
+    strategy_ensemble_xgb_lgbm(
+        test_df, sub_xgb["Label"].values, sub_lgbm["Label"].values, OUTPUT_DIR
     )
 
     # ---- Verify ----
